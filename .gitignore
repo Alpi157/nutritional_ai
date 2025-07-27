@@ -1,0 +1,17 @@
+t5-ingredient-parser/
+*.bin
+*.safetensors
+*.pt
+*.pth
+__pycache__/
+*.pyc
+.cache/
+*.ipynb_checkpoints/
+.env
+.env.*
+.DS_Store
+.vscode/
+.idea/
+food-101/
+*.csv
+*.json

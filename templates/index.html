@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Food Vision → Recipe & Nutrition</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: '#7C3AED',
+            secondary: '#0EA5E9',
+            accent: '#F59E0B',
+            surface: 'rgba(255,255,255,0.08)'
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif']
+          },
+          keyframes: {
+            spinSlow: { '0%': { transform: 'rotate(0deg)' }, '100%': { transform: 'rotate(360deg)' } }
+          },
+          animation: {
+            spinSlow: 'spinSlow 1.2s linear infinite'
+          }
+        }
+      }
+    }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.gstatic.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+
+  <script>
+    const stored = localStorage.getItem('theme');
+    if (stored) document.documentElement.classList.toggle('dark', stored === 'dark');
+  </script>
+
+  <style>
+    .blur-blob {
+      filter: blur(60px);
+      opacity: 0.4;
+      position: absolute;
+      z-index: -1;
+    }
+    .card-glass {
+      backdrop-filter: blur(16px) saturate(180%);
+      -webkit-backdrop-filter: blur(16px) saturate(180%);
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.18);
+    }
+    .light .card-glass {
+      background: rgba(255,255,255,0.6);
+      border: 1px solid rgba(255,255,255,0.4);
+    }
+    .fade-in { opacity: 0; transform: translateY(12px); }
+
+    /* Collapsible instructions */
+    .instr-collapsed {
+      max-height: 440px;
+      overflow: hidden;
+      position: relative;
+    }
+    .instr-collapsed:after {
+      content: '';
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      height: 80px;
+      background: linear-gradient(to bottom, rgba(15,15,16,0) 0%, rgba(15,15,16,1) 85%);
+    }
+    .light .instr-collapsed:after{
+      background: linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,1) 85%);
+    }
+
+    /* Dropzone + preview */
+    .dropzone {
+      border: 2px dashed rgba(255,255,255,0.2);
+      transition: border-color .2s ease;
+      position: relative;
+    }
+    .dropzone.dragover { border-color: #7C3AED; }
+    .dz-thumb {
+      max-height: 120px;
+      border-radius: 0.75rem;
+      object-fit: cover;
+      box-shadow: 0 4px 16px rgba(0,0,0,.25);
+    }
+
+    /* Loading overlay */
+    #loadingOverlay {
+      backdrop-filter: blur(6px);
+    }
+  </style>
+</head>
+<body class="font-sans relative overflow-x-hidden bg-[#0f0f10] text-white light:bg-white light:text-gray-900">
+
+  <!-- Loading overlay -->
+  <div id="loadingOverlay" class="fixed inset-0 bg-black/60 flex flex-col items-center justify-center z-50 hidden">
+    <div class="w-14 h-14 rounded-full border-4 border-white/20 border-t-white animate-spinSlow mb-4"></div>
+    <p class="text-white font-medium tracking-wide">Analyzing image…</p>
+  </div>
+
+  <div class="blur-blob w-[500px] h-[500px] bg-primary rounded-full top-[-100px] left-[-100px]"></div>
+  <div class="blur-blob w-[400px] h-[400px] bg-secondary rounded-full bottom-[-120px] right-[-80px]"></div>
+
+  <header class="flex justify-between items-center py-6 max-w-6xl mx-auto px-4">
+    <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Nutritional AI</h1>
+    <button id="themeToggle" class="inline-flex items-center gap-2 text-sm px-3 py-2 rounded-md card-glass hover:bg-white/20 transition">
+      <i data-lucide="moon-star" class="w-4 h-4"></i><span>Toggle Theme</span>
+    </button>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 pb-24">
+
+    <section class="card-glass rounded-2xl p-8 mb-10 fade-in" id="uploadCard">
+      <h2 class="text-xl md:text-2xl font-semibold mb-4">Upload a Food Image</h2>
+      <form method="POST" enctype="multipart/form-data" id="uploadForm" class="space-y-4">
+        <div id="dropzone" class="dropzone rounded-xl p-8 flex flex-col items-center justify-center gap-3 text-center cursor-pointer">
+          <i data-lucide="image-plus" class="w-10 h-10 opacity-70" id="dzIcon"></i>
+          <p class="text-sm opacity-80" id="dzText">Drag & drop an image here, or click to browse</p>
+          <img id="dzPreview" class="dz-thumb hidden" alt="preview">
+          <span id="dzFilename" class="text-xs opacity-70 hidden"></span>
+          <input type="file" name="image" id="imageInput" accept="image/*" class="hidden" required>
+        </div>
+        <button type="submit" id="analyzeBtn" class="w-full md:w-auto bg-primary hover:bg-primary/80 transition text-white font-medium px-6 py-3 rounded-xl shadow-lg shadow-primary/30">Analyze</button>
+      </form>
+    </section>
+
+    {% if image_path %}
+    <!-- 3-column grid on lg, 2 on md, 1 on small -->
+    <section class="grid gap-4 fade-in md:grid-cols-2 lg:grid-cols-3" id="results">
+
+      <!-- Dish & Image -->
+      <div class="card-glass rounded-2xl p-6 flex flex-col">
+        <h3 class="text-lg font-semibold mb-3 flex items-center gap-2"><i data-lucide="sparkles" class="w-5 h-5 text-accent"></i> Predicted Dish</h3>
+        <p class="text-2xl font-bold mb-4">{{ dish }}</p>
+        <img src="{{ image_path }}" alt="Uploaded Image" class="rounded-xl shadow-lg object-cover w-full max-h-[320px]">
+      </div>
+
+      <!-- Nutrition Overview -->
+      <div class="card-glass rounded-2xl p-6 flex flex-col">
+        <h3 class="text-lg font-semibold mb-3 flex items-center gap-2"><i data-lucide="chart-pie" class="w-5 h-5 text-secondary"></i> Nutrition Overview</h3>
+        <p class="text-sm opacity-80 mb-2">Estimated servings: <span class="font-semibold">{{ nutrition.servings }}</span></p>
+        <canvas id="macroChart" class="max-h-[280px]"></canvas>
+        <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full bg-[#7C3AED]"></span>Calories / serving: {{ nutrition.per_serving.calories_kcal|round(1) }} kcal</div>
+          <div class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full bg-[#0EA5E9]"></span>Protein / serving: {{ nutrition.per_serving.protein_g|round(1) }} g</div>
+          <div class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full bg-[#F59E0B]"></span>Carbs / serving: {{ nutrition.per_serving.carbs_g|round(1) }} g</div>
+          <div class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full bg-[#10B981]"></span>Fat / serving: {{ nutrition.per_serving.fat_g|round(1) }} g</div>
+        </div>
+        <hr class="my-4 opacity-20">
+        <div class="grid grid-cols-2 gap-3 text-xs opacity-80">
+          <div>Total calories (dish): {{ nutrition.totals.calories_kcal|round(1) }} kcal</div>
+          <div>Total protein: {{ nutrition.totals.protein_g|round(1) }} g</div>
+          <div>Total carbs: {{ nutrition.totals.carbs_g|round(1) }} g</div>
+          <div>Total fat: {{ nutrition.totals.fat_g|round(1) }} g</div>
+        </div>
+      </div>
+
+      <!-- Ingredients w/ amounts -->
+      <div class="card-glass rounded-2xl p-6 flex flex-col">
+        <h3 class="text-lg font-semibold mb-3 flex items-center gap-2"><i data-lucide="list-checks" class="w-5 h-5 text-primary"></i> Estimated Ingredients</h3>
+        <ul class="space-y-2 text-sm leading-relaxed">
+          {% for it in parsed_ingredients %}
+            {% set q = it.parsed.quantity %}
+            {% set u = it.parsed.unit %}
+            {% set n = it.parsed.name %}
+            <li class="flex items-start gap-2">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-primary mt-2"></span>
+              <span>
+                {% if q %}{{ ('%.2f' % q).rstrip('0').rstrip('.') }}{% endif %}
+                {% if u %} {{ u }}{% endif %}
+                {{ n }}
+              </span>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+
+      <!-- Instructions (full-width card on lg) -->
+      <div class="card-glass rounded-2xl p-6 flex flex-col md:col-span-2 lg:col-span-3">
+        <h3 class="text-lg font-semibold mb-3 flex items-center gap-2"><i data-lucide="book-open-text" class="w-5 h-5 text-secondary"></i> Recipe Instructions</h3>
+
+        {% set long = instructions|length > 20 %}
+        <div id="instrWrapper" class="text-sm leading-relaxed {% if long %}instr-collapsed{% endif %}">
+          <ol id="instructionsList" class="space-y-3 list-decimal list-inside">
+            {% for step in instructions %}
+              <li>{{ step }}</li>
+            {% endfor %}
+          </ol>
+        </div>
+
+        {% if long %}
+          <button id="toggleInstr" class="mt-4 self-start text-xs px-3 py-1 rounded-lg bg-secondary/30 hover:bg-secondary/40 transition">
+            Show more
+          </button>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    window.addEventListener('load', () => {
+      gsap.utils.toArray('.fade-in').forEach((el, i) => {
+        gsap.to(el, {opacity: 1, y: 0, duration: 0.6, delay: 0.15 * i, ease: "power3.out"});
+      });
+    });
+
+    // Dropzone + preview
+    const dropzone   = document.getElementById('dropzone');
+    const imageInput = document.getElementById('imageInput');
+    const dzIcon     = document.getElementById('dzIcon');
+    const dzText     = document.getElementById('dzText');
+    const dzPreview  = document.getElementById('dzPreview');
+    const dzFilename = document.getElementById('dzFilename');
+
+    function showPreview(file){
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        dzPreview.src = e.target.result;
+        dzPreview.classList.remove('hidden');
+        dzFilename.textContent = file.name;
+        dzFilename.classList.remove('hidden');
+        dzIcon.classList.add('hidden');
+        dzText.classList.add('hidden');
+      };
+      reader.readAsDataURL(file);
+    }
+
+    dropzone.addEventListener('click', () => imageInput.click());
+    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if(e.dataTransfer.files.length){
+        imageInput.files = e.dataTransfer.files;
+        showPreview(e.dataTransfer.files[0]);
+      }
+    });
+
+    imageInput.addEventListener('change', e => {
+      if(e.target.files && e.target.files[0]){
+        showPreview(e.target.files[0]);
+      }
+    });
+
+    // Loading overlay on submit
+    const form   = document.getElementById('uploadForm');
+    const overlay= document.getElementById('loadingOverlay');
+    const btn    = document.getElementById('analyzeBtn');
+    form.addEventListener('submit', () => {
+      overlay.classList.remove('hidden');
+      btn.disabled = true;
+      btn.classList.add('opacity-70','cursor-not-allowed');
+    });
+
+    // Theme toggle
+    const themeBtn = document.getElementById('themeToggle');
+    themeBtn?.addEventListener('click', () => {
+      document.documentElement.classList.toggle('dark');
+      const isDark = document.documentElement.classList.contains('dark');
+      localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      document.documentElement.classList.toggle('light', !isDark);
+    });
+    if(!document.documentElement.classList.contains('dark')){
+      document.documentElement.classList.add('light');
+    }
+
+    // Instructions collapse toggle
+    const toggleBtn = document.getElementById('toggleInstr');
+    if(toggleBtn){
+      const wrap = document.getElementById('instrWrapper');
+      let open = false;
+      toggleBtn.addEventListener('click', () => {
+        open = !open;
+        if(open){
+          wrap.classList.remove('instr-collapsed');
+          toggleBtn.textContent = 'Show less';
+        }else{
+          wrap.classList.add('instr-collapsed');
+          toggleBtn.textContent = 'Show more';
+          wrap.scrollIntoView({behavior:'smooth', block:'start'});
+        }
+      });
+    }
+
+    {% if image_path %}
+    const macros = {
+      calories: {{ nutrition.per_serving.calories_kcal|default(0)|round(1) }},
+      protein:  {{ nutrition.per_serving.protein_g|default(0)|round(1) }},
+      carbs:    {{ nutrition.per_serving.carbs_g|default(0)|round(1) }},
+      fat:      {{ nutrition.per_serving.fat_g|default(0)|round(1) }}
+    };
+
+    const ctx = document.getElementById('macroChart').getContext('2d');
+
+    Chart.register({
+      id: 'centerText',
+      afterDraw(chart) {
+        const {ctx, chartArea: {width, height}} = chart;
+        ctx.save();
+        ctx.font = '600 18px Inter';
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${macros.calories} kcal`, width / 2, height / 2 + chart.chartArea.top / 2);
+        ctx.restore();
+      }
+    });
+
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Protein (g)', 'Carbs (g)', 'Fat (g)'],
+        datasets: [{
+          data: [macros.protein, macros.carbs, macros.fat],
+          backgroundColor: ['#0EA5E9', '#F59E0B', '#10B981'],
+          borderWidth: 0,
+          hoverOffset: 8
+        }]
+      },
+      options: {
+        plugins: {
+          tooltip: { enabled: true },
+          legend: { display: false }
+        },
+        cutout: '65%'
+      }
+    });
+    {% endif %}
+  </script>
+</body>
+</html>
