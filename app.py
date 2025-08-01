@@ -43,6 +43,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 model = models.resnet50()
 model.fc = torch.nn.Linear(model.fc.in_features, 101)
 model.load_state_dict(torch.load('resnet50_food101.pth', map_location='cpu'))
+model.to(DEVICE)
 model.eval()
 logger.info("ResNet50 model loaded.")
 
@@ -59,6 +60,16 @@ logger.info("Recipe matches DataFrame loaded.")
 with open("ingredient_to_nutrition_map.pkl", "rb") as f:
     nutrition_map = pickle.load(f)
 logger.info("Nutrition map loaded.")
+
+with open("ingredient_vocab.json", "r") as f:
+    ingredient_vocab = json.load(f)
+ingredient_to_idx = {ing: i for i, ing in enumerate(ingredient_vocab)}
+model_ing = models.resnet18()
+model_ing.fc = torch.nn.Linear(model_ing.fc.in_features, len(ingredient_vocab))
+model_ing.load_state_dict(torch.load('ingredient_model.pth', map_location='cpu'))
+model_ing.to(DEVICE)
+model_ing.eval()
+logger.info("Ingredient model loaded.")
 
 test_transform = transforms.Compose([
     transforms.Resize(256),
@@ -81,25 +92,7 @@ VEG_FRUIT_SPICE_WORDS = ["onion","garlic","pea","carrot","celery","lemon","lime"
 MAX_KCAL_VEG = 150
 SIMILARITY_MAIN = 0.92
 SIMILARITY_FALLBACK = 0.88
-
-SERVING_DEFAULTS = {
-    "apple pie":8,"baby back ribs":4,"baklava":16,"beef carpaccio":2,"beef tartare":2,"beet salad":3,"beignets":6,
-    "bibimbap":2,"bread pudding":6,"breakfast burrito":1,"bruschetta":4,"caesar salad":2,"cannoli":6,"caprese salad":2,
-    "carrot cake":12,"ceviche":4,"cheese plate":4,"cheesecake":12,"chicken curry":3,"chicken quesadilla":1,"chicken wings":4,
-    "chocolate cake":12,"chocolate mousse":4,"churros":6,"clam chowder":4,"club sandwich":1,"crab cakes":2,"creme brulee":4,
-    "croque madame":1,"cup cakes":6,"cupcakes":6,"deviled eggs":6,"donuts":6,"dumplings":4,"edamame":2,"eggs benedict":1,
-    "escargots":2,"falafel":3,"filet mignon":1,"fish and chips":2,"foie gras":2,"french fries":2,"french onion soup":4,
-    "french toast":2,"fried calamari":3,"fried rice":3,"frozen yogurt":2,"garlic bread":4,"gnocchi":2,"greek salad":2,
-    "grilled cheese sandwich":1,"grilled salmon":2,"guacamole":4,"gyoza":3,"hamburger":1,"hot and sour soup":4,"hot dog":1,
-    "huevos rancheros":1,"hummus":4,"ice cream":4,"lasagna":6,"lobster bisque":4,"lobster roll sandwich":1,"macaroni and cheese":4,
-    "macarons":8,"miso soup":4,"mussels":2,"nachos":4,"omelette":1,"onion rings":3,"oysters":2,"pad thai":2,"paella":4,
-    "pancakes":2,"panna cotta":4,"peking duck":4,"pho":1,"pizza":8,"pork chop":1,"poutine":2,"prime rib":4,"pulled pork sandwich":1,
-    "ramen":1,"ravioli":2,"red velvet cake":12,"risotto":3,"samosa":4,"sashimi":2,"scallops":2,"seaweed salad":2,"shrimp and grits":2,
-    "spaghetti bolognese":2,"spaghetti carbonara":2,"spring rolls":4,"steak":1,"strawberry shortcake":8,"sushi":8,"tacos":3,
-    "takoyaki":4,"tiramisu":8,"tuna tartare":2,"waffles":2
-}
-SERVING_DEFAULTS = {k.lower(): v for k,v in SERVING_DEFAULTS.items()}
-
+SERVING_DEFAULTS = {k.lower(): v for k,v in {"apple pie":8,"baby back ribs":4,"baklava":16,"beef carpaccio":2,"beef tartare":2,"beet salad":3,"beignets":6,"bibimbap":2,"bread pudding":6,"breakfast burrito":1,"bruschetta":4,"caesar salad":2,"cannoli":6,"caprese salad":2,"carrot cake":12,"ceviche":4,"cheese plate":4,"cheesecake":12,"chicken curry":3,"chicken quesadilla":1,"chicken wings":4,"chocolate cake":12,"chocolate mousse":4,"churros":6,"clam chowder":4,"club sandwich":1,"crab cakes":2,"creme brulee":4,"croque madame":1,"cup cakes":6,"cupcakes":6,"deviled eggs":6,"donuts":6,"dumplings":4,"edamame":2,"eggs benedict":1,"escargots":2,"falafel":3,"filet mignon":1,"fish and chips":2,"foie gras":2,"french fries":2,"french onion soup":4,"french toast":2,"fried calamari":3,"fried rice":3,"frozen yogurt":2,"garlic bread":4,"gnocchi":2,"greek salad":2,"grilled cheese sandwich":1,"grilled salmon":2,"guacamole":4,"gyoza":3,"hamburger":1,"hot and sour soup":4,"hot dog":1,"huevos rancheros":1,"hummus":4,"ice cream":4,"lasagna":6,"lobster bisque":4,"lobster roll sandwich":1,"macaroni and cheese":4,"macarons":8,"miso soup":4,"mussels":2,"nachos":4,"omelette":1,"onion rings":3,"oysters":2,"pad thai":2,"paella":4,"pancakes":2,"panna cotta":4,"peking duck":4,"pho":1,"pizza":8,"pork chop":1,"poutine":2,"prime rib":4,"pulled pork sandwich":1,"ramen":1,"ravioli":2,"red velvet cake":12,"risotto":3,"samosa":4,"sashimi":3,"scallops":2,"seaweed salad":2,"shrimp and grits":2,"spaghetti bolognese":2,"spaghetti carbonara":2,"spring rolls":4,"steak":1,"strawberry shortcake":8,"sushi":8,"tacos":3,"takoyaki":4,"tiramisu":8,"tuna tartare":2,"waffles":2}.items()}
 def to_float_qty(q):
     try:
         q=q.strip()
@@ -245,7 +238,7 @@ def _loose_json_parse(txt):
         pass
     block=_first_json_block(txt)
     if block:
-        blk=block.replace("'",'"')
+        blk=block.replace("'","\"")
         blk=re.sub(r'([{,]\s*)(\w+)\s*:',r'\1"\2":',blk)
         blk=re.sub(r',\s*([}\]])',r'\1',blk)
         try:
@@ -295,7 +288,6 @@ def parse_ingredient_ai(text):
             out_ids=t5_model.generate(**inputs,max_length=64,do_sample=False,num_beams=4)
         decoded=t5_tokenizer.decode(out_ids[0],skip_special_tokens=True)
         decoded=_strip_t5_tokens(decoded)
-        logger.debug(f"T5 RAW OUTPUT: {decoded}")
         data=_loose_json_parse(decoded)
         if not data:
             data=_heuristic_from_original(text)
@@ -321,11 +313,9 @@ def estimate_nutrition(ingredient_strings,fallback_ner=None):
     details=[]
     logger.info("---- Nutrient Estimation Start ----")
     for raw in ingredient_strings:
-        logger.debug(f"RAW INGREDIENT: {raw}")
         parsed=parse_ingredient_ai(raw) or parse_ingredient_rule(raw)
         grams=estimate_grams(parsed)
         if grams<=0 or not parsed['name']:
-            logger.debug("Skipped due to zero grams or empty name.")
             continue
         total_grams+=grams
         key=match_nutrition_key(parsed['name'])
@@ -338,30 +328,22 @@ def estimate_nutrition(ingredient_strings,fallback_ner=None):
                     used_fallback=True
                     break
         if key is None:
-            logger.warning(f"No nutrition match for: '{parsed['name']}' (raw: '{raw}')")
             continue
         raw_nut=nutrition_map[key]['nutrition']
         nut=sanity_fix(parsed['name'],raw_nut)
         factor=grams/100.0
-        cal=nut['calories_kcal']*factor
-        prot=nut['protein_g']*factor
-        carb=nut['carbs_g']*factor
-        fat =nut['fat_g']*factor
-        totals['calories_kcal']+=cal
-        totals['protein_g']+=prot
-        totals['carbs_g']+=carb
-        totals['fat_g']+=fat
+        totals['calories_kcal']+=nut['calories_kcal']*factor
+        totals['protein_g']+=nut['protein_g']*factor
+        totals['carbs_g']+=nut['carbs_g']*factor
+        totals['fat_g']+=nut['fat_g']*factor
         details.append({
             "raw": raw,
             "parsed": parsed,
             "grams": grams,
-            "nutr_per_ing": {"kcal": cal, "protein": prot, "carbs": carb, "fat": fat},
+            "nutr_per_ing": {"kcal": nut['calories_kcal']*factor, "protein": nut['protein_g']*factor, "carbs": nut['carbs_g']*factor, "fat": nut['fat_g']*factor},
             "match_key": key,
             "used_fallback": used_fallback
         })
-        logger.debug(f"MATCH -> '{parsed['name']}' -> key='{key}' {'(fallback)' if used_fallback else ''} | grams={grams:.2f}, factor={factor:.2f}")
-    logger.info(f"TOTALS -> kcal={totals['calories_kcal']:.2f}, protein={totals['protein_g']:.2f}, carbs={totals['carbs_g']:.2f}, fat={totals['fat_g']:.2f}")
-    logger.info("---- Nutrient Estimation End ----")
     return totals,total_grams,details
 
 def extract_servings_from_text(text_blob):
@@ -385,58 +367,52 @@ def guess_servings(dish_class, ingredients_raw, instructions, total_kcal, total_
 
 def predict_image(img_path):
     image=Image.open(img_path).convert('RGB')
-    image=test_transform(image).unsqueeze(0)
+    image=test_transform(image).unsqueeze(0).to(DEVICE)
     with torch.no_grad():
         outputs=model(image)
         _,predicted=outputs.max(1)
-    pred=class_names[predicted.item()]
-    logger.info(f"Predicted dish: {pred}")
-    return pred
+    return class_names[predicted.item()]
 
-def _instr_len(steps):
-    if not isinstance(steps,list): return 0
-    return sum(len(str(s).split()) for s in steps)
+def predict_ingredients(img_path, threshold=0.3):
+    image=Image.open(img_path).convert('RGB')
+    image=test_transform(image).unsqueeze(0).to(DEVICE)
+    with torch.no_grad():
+        outputs=torch.sigmoid(model_ing(image))
+    probs=outputs[0].cpu().numpy()
+    return [ingredient_vocab[i] for i,p in enumerate(probs) if p>=threshold]
 
-def _ing_len(lst):
-    if not isinstance(lst,list): return 0
-    return len(lst)
-
-def get_recipe_info(dish_class):
+def get_recipe_info(dish_class, preds=None):
     dish_class=dish_class.lower()
     rows=recipe_df[recipe_df['food101_class']==dish_class]
     if rows.empty:
-        logger.warning(f"No recipe info found for class: {dish_class}")
         return {'ingredients_raw':[],'ingredients_clean':[],'instructions':["No instructions found."]}
     df=rows.copy()
-    df["instr_score"]=df["instructions"].apply(_instr_len)
-    df["ing_score"]=df["ingredients_list"].apply(_ing_len)
-    df["score"]=df["instr_score"]*0.8+df["ing_score"]*0.2
-    r=df.sort_values("score",ascending=False).iloc[0]
-    return {'ingredients_raw':r['ingredients_list'],
-            'ingredients_clean':r['ner'],
-            'instructions':r['instructions']}
+    if preds:
+        df['overlap']=df['ner'].apply(lambda ner: len(set(preds)&set(ner)))
+        max_overlap=df['overlap'].max()
+        if max_overlap>0:
+            df=df[df['overlap']==max_overlap]
+    df['instr_score']=df['instructions'].apply(lambda steps: sum(len(str(s).split()) for s in steps))
+    df['ing_score']=df['ingredients_list'].apply(lambda lst: len(lst))
+    df['score']=df['instr_score']*0.8+df['ing_score']*0.2
+    r=df.sort_values('score',ascending=False).iloc[0]
+    return {'ingredients_raw':r['ingredients_list'],'ingredients_clean':r['ner'],'instructions':r['instructions']}
 
-@app.route("/",methods=["GET","POST"])
+@app.route("/",methods=["GET","POST"] )
 def index():
     if request.method=="POST":
         file=request.files.get('image')
         if file:
             img_path=os.path.join(app.config['UPLOAD_FOLDER'],file.filename)
             file.save(img_path)
-            logger.info(f"Image saved to {img_path}")
             dish=predict_image(img_path)
-            info=get_recipe_info(dish)
+            preds=predict_ingredients(img_path)
+            info=get_recipe_info(dish,preds)
             totals,total_g,details=estimate_nutrition(info['ingredients_raw'],fallback_ner=info['ingredients_clean'])
             servings=guess_servings(dish,info['ingredients_raw'],info['instructions'],totals['calories_kcal'],total_g)
             per_serv={k:v/servings for k,v in totals.items()}
             nutrition={"totals":totals,"per_serving":per_serv,"servings":servings,"total_grams":total_g}
-            return render_template("index.html",
-                                   image_path=img_path,
-                                   dish=dish,
-                                   ingredients_raw=info['ingredients_raw'],
-                                   parsed_ingredients=details,
-                                   instructions=info['instructions'],
-                                   nutrition=nutrition)
+            return render_template("index.html",image_path=img_path,dish=dish,ingredients_raw=info['ingredients_raw'],parsed_ingredients=details,instructions=info['instructions'],nutrition=nutrition)
     return render_template("index.html")
 
 if __name__=="__main__":
