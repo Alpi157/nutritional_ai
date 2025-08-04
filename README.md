@@ -70,5 +70,5 @@ nutritional_ai/
 ```
 
 ## Credits
-Developed by [Team 4 - Image-to-Recipe Nutritional AI] as part of ECE 569A - Artificial Intelligence (UVic).
+Developed by [Team 6 - Image-to-Recipe Nutritional AI] as part of ECE 569A - Artificial Intelligence (UVic).
 
